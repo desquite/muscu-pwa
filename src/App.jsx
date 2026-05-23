@@ -29,12 +29,14 @@ const DAYS = [
     accent: "#d45a1a",
     glow: "rgba(212,90,26,0.25)",
     exercises: [
+      { name: "Corde à sauter", sets: 3, reps: "1min", rest: "30s", muscle: "Échauffement cardio", tip: "Reste sur la pointe des pieds, sauts bas et rapides, coudes près du corps." },
       { name: "Crunch classique", sets: 4, reps: "20", rest: "45s", muscle: "Abdos sup.", tip: "Ne tire pas sur la nuque, contracte le ventre à la montée." },
       { name: "Relevé de jambes", sets: 3, reps: "15", rest: "45s", muscle: "Abdos inf.", tip: "Dos plaqué au sol, jambes bien tendues tout le long." },
       { name: "Planche (gainage)", sets: 4, reps: "45–60s", rest: "30s", muscle: "Sangle abdo", tip: "Corps droit de la tête aux talons, respire normalement." },
       { name: "Crunch obliques", sets: 3, reps: "15/côté", rest: "45s", muscle: "Obliques", tip: "Tourne le coude vers le genou opposé, pause en haut." },
       { name: "Burpees", sets: 3, reps: "10", rest: "60s", muscle: "Cardio + full body", tip: "Enchaîne : squat → planche → pompe → saut les bras en l'air." },
       { name: "Mountain climbers", sets: 3, reps: "30s", rest: "30s", muscle: "Cardio + abdos", tip: "Cadence rapide, hanches basses, respire régulièrement." },
+      { name: "Battle ropes", sets: 4, reps: "30s", rest: "45s", muscle: "Finisher full body", tip: "Pieds écartés largeur des épaules, genoux fléchis, alterne ondes rapides bras gauche/droit." },
     ],
   },
   {
