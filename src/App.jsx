@@ -113,6 +113,22 @@ const saveMeta = (d) => safeSave(META_KEY, d);
 const loadHistory = () => safeLoad(HISTORY_KEY, []);
 const saveHistory = (d) => safeSave(HISTORY_KEY, d);
 
+// ─── JOUR PERTINENT À L'OUVERTURE ────────────────────────────────────────────
+// Mapping jour-de-semaine (Date.getDay : 0=Dim, 1=Lun...6=Sam) → index dans DAYS
+// Repos = on saute au prochain jour d'entraînement.
+const WEEKDAY_TO_ACTIVE_DAY_IDX = {
+  0: 3, // Dimanche  → J4 (dimanche)
+  1: 0, // Lundi     → J1 (lundi)
+  2: 1, // Mardi     → J2 (mercredi)  ← prochain
+  3: 1, // Mercredi  → J2 (mercredi)
+  4: 2, // Jeudi     → J3 (samedi)    ← prochain
+  5: 2, // Vendredi  → J3 (samedi)    ← prochain
+  6: 2, // Samedi    → J3 (samedi)
+};
+function getRelevantActiveDay() {
+  return WEEKDAY_TO_ACTIVE_DAY_IDX[new Date().getDay()] ?? 0;
+}
+
 // ─── ISO WEEK ────────────────────────────────────────────────────────────────
 function getISOWeek(date = new Date()) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -609,7 +625,7 @@ function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx, l
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
 export default function App({ user, onLogout, onUserUpdate }) {
-  const [activeDay, setActiveDay] = useState(0);
+  const [activeDay, setActiveDay] = useState(getRelevantActiveDay);
   const [checked, setChecked] = useState({});
   const [history, setHistory] = useState([]);
   const [loadHistory, setLoadHistory] = useState({}); // { "1-0": [{weight,reps,weekKey,...}, ...] }
