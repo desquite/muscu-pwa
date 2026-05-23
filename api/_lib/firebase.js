@@ -1,18 +1,33 @@
-// Init firebase-admin (singleton). Utilisé par tous les endpoints serverless.
+// Init firebase-admin (LAZY singleton). Utilisé par tous les endpoints serverless.
+// On init seulement quand `getDb()` est appelé, pour pouvoir renvoyer une erreur JSON
+// propre si les env vars manquent (au lieu de crash au module-load).
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
-if (!getApps().length) {
-  initializeApp({
-    credential: cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-  });
+let _db = null;
+
+export function getDb() {
+  if (_db) return _db;
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!projectId || !clientEmail || !privateKey) {
+    throw new Error(
+      "Firebase non configuré : ajoute FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL et FIREBASE_PRIVATE_KEY dans les Environment Variables de Vercel."
+    );
+  }
+  if (!getApps().length) {
+    initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+  }
+  _db = getFirestore();
+  return _db;
 }
 
-export const db = getFirestore();
+// Proxy pour compat avec le code existant qui fait `db.collection(...)`.
+// Tout accès déclenche l'init lazy.
+export const db = new Proxy({}, {
+  get(_t, prop) { return getDb()[prop]; },
+});
 
 // Génère un token aléatoire (hex 32 chars = 16 bytes)
 export function generateToken() {
