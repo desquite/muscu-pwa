@@ -630,6 +630,8 @@ export default function App({ user, onLogout, onUserUpdate }) {
   const [history, setHistory] = useState([]);
   const [loadHistory, setLoadHistory] = useState({}); // { "1-0": [{weight,reps,weekKey,...}, ...] }
   const [loads, setLoads] = useState({}); // valeurs en cours dans les inputs : { "1-0": { weight: "50", reps: "12" } }
+  const [leaderboard, setLeaderboard] = useState(null); // null = pas encore chargé, [] = chargé
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [tab, setTab] = useState("programme"); // programme | planning | conseils | historique
   const [videoExercise, setVideoExercise] = useState(null);
   const [restTimer, setRestTimer] = useState(null); // { endsAt, totalSeconds, exerciseName, nextExerciseName }
@@ -850,6 +852,17 @@ export default function App({ user, onLogout, onUserUpdate }) {
     }));
   }, []);
 
+  // Fetch leaderboard à chaque ouverture de l'onglet Classement
+  useEffect(() => {
+    if (tab !== "classement") return;
+    setLeaderboardLoading(true);
+    authedFetch("/api/leaderboard")
+      .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then(d => setLeaderboard(d.leaderboard || []))
+      .catch(() => setLeaderboard([]))
+      .finally(() => setLeaderboardLoading(false));
+  }, [tab]);
+
   const adjustTimer = useCallback((delta) => {
     setRestTimer(t => {
       if (!t) return t;
@@ -908,12 +921,12 @@ export default function App({ user, onLogout, onUserUpdate }) {
 
         {/* ── TAB NAV ── */}
         <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.04)", borderRadius: 12, padding: 4 }}>
-          {[["programme", "Programme"], ["planning", "Planning"], ["historique", "Historique"], ["conseils", "Conseils"]].map(([key, label]) => (
+          {[["programme", "Programme"], ["planning", "Planning"], ["historique", "Histo"], ["classement", "Classement"], ["conseils", "Conseils"]].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
-              flex: 1, padding: "8px 4px", borderRadius: 8, border: "none",
+              flex: 1, padding: "8px 2px", borderRadius: 8, border: "none",
               background: tab === key ? "rgba(255,255,255,0.1)" : "transparent",
               color: tab === key ? "#fff" : "#666",
-              fontSize: 11, fontWeight: 600, letterSpacing: "0.03em",
+              fontSize: 10, fontWeight: 600, letterSpacing: "0.02em",
               transition: "all 0.2s",
             }}>{label}</button>
           ))}
@@ -1255,6 +1268,97 @@ export default function App({ user, onLogout, onUserUpdate }) {
           </div>
         )}
 
+        {/* ═══ CLASSEMENT TAB ═══ */}
+        {tab === "classement" && (
+          <div className="fade-up">
+            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 32, letterSpacing: "0.08em", marginBottom: 4, color: "#fff" }}>
+              CLASSEMENT
+            </div>
+            <div style={{ fontSize: 12, color: "#555", marginBottom: 20 }}>
+              Toi et tes amis, triés par <b>semaines parfaites</b>.
+            </div>
+
+            {leaderboardLoading && (
+              <div style={{ textAlign: "center", padding: 30, color: "#555", fontSize: 13 }}>
+                Chargement…
+              </div>
+            )}
+
+            {!leaderboardLoading && leaderboard !== null && leaderboard.length === 0 && (
+              <div style={{
+                textAlign: "center", padding: "30px 20px",
+                background: "rgba(255,255,255,0.02)",
+                border: "1px dashed rgba(255,255,255,0.08)",
+                borderRadius: 14, color: "#555", fontSize: 13, lineHeight: 1.6,
+              }}>
+                🏆 Pas encore de classement<br/>
+                <span style={{ fontSize: 11, color: "#444" }}>
+                  Invite tes amis à s'inscrire pour comparer !
+                </span>
+              </div>
+            )}
+
+            {!leaderboardLoading && leaderboard && leaderboard.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {leaderboard.map((u, i) => {
+                  const rank = i + 1;
+                  const medal = rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : null;
+                  const isCurrent = u.isCurrentUser;
+                  const rankColor = rank === 1 ? "#ffd700" : rank === 2 ? "#c0c0c0" : rank === 3 ? "#cd7f32" : "#666";
+                  return (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      background: isCurrent
+                        ? "linear-gradient(135deg, rgba(41,121,212,0.15), rgba(41,121,212,0.05))"
+                        : "rgba(255,255,255,0.03)",
+                      border: `1px solid ${isCurrent ? "rgba(41,121,212,0.4)" : "rgba(255,255,255,0.07)"}`,
+                      borderRadius: 14, padding: "14px 14px",
+                      boxShadow: isCurrent ? "0 4px 20px rgba(41,121,212,0.15)" : "none",
+                    }}>
+                      <div style={{
+                        width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                        background: medal ? `${rankColor}15` : "rgba(255,255,255,0.04)",
+                        border: `1px solid ${medal ? `${rankColor}50` : "rgba(255,255,255,0.06)"}`,
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      }}>
+                        {medal ? (
+                          <span style={{ fontSize: 22 }}>{medal}</span>
+                        ) : (
+                          <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, color: rankColor }}>#{rank}</span>
+                        )}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontSize: 15, fontWeight: 700, color: isCurrent ? "#fff" : "#ccc",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {u.name}{isCurrent && <span style={{ color: "#2979d4", fontSize: 11, marginLeft: 6, fontWeight: 600 }}>(toi)</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#666", marginTop: 3, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                          <span>🔥 {u.currentStreak} série</span>
+                          <span>💪 {u.totalExos} exos</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 26, color: rankColor, lineHeight: 1 }}>
+                          {u.perfectWeeks}
+                        </div>
+                        <div style={{ fontSize: 9, color: "#555", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+                          sem · {u.perfectWeeks > 1 ? "parfaites" : "parfaite"}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ marginTop: 16, fontSize: 11, color: "#444", textAlign: "center", lineHeight: 1.5 }}>
+              Tu peux masquer ton score dans <b style={{ color: "#666" }}>Conseils → Mon Profil</b>.
+            </div>
+          </div>
+        )}
+
         {/* ═══ CONSEILS TAB ═══ */}
         {tab === "conseils" && (
           <div className="fade-up">
@@ -1323,13 +1427,13 @@ export default function App({ user, onLogout, onUserUpdate }) {
                 {/* Toggle rappels actifs */}
                 <div style={{
                   display: "flex", justifyContent: "space-between", alignItems: "center",
-                  padding: "10px 12px", marginBottom: 10,
+                  padding: "10px 12px", marginBottom: 8,
                   background: "rgba(255,255,255,0.03)", borderRadius: 10,
                 }}>
                   <div>
                     <div style={{ fontSize: 13, color: "#fff", fontWeight: 600 }}>Rappels WhatsApp</div>
                     <div style={{ fontSize: 11, color: "#666" }}>
-                      {user.rappelsActifs ? "Activés (17h30 + 20h)" : "Désactivés"}
+                      {user.rappelsActifs ? "Activés (9h + 17h30 + 20h)" : "Désactivés"}
                     </div>
                   </div>
                   <button
@@ -1356,6 +1460,47 @@ export default function App({ user, onLogout, onUserUpdate }) {
                     <div style={{
                       width: 20, height: 20, borderRadius: "50%", background: "#fff",
                       position: "absolute", top: 3, left: user.rappelsActifs ? 25 : 3,
+                      transition: "left 0.2s",
+                    }} />
+                  </button>
+                </div>
+
+                {/* Toggle apparaître dans classement */}
+                <div style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "10px 12px", marginBottom: 10,
+                  background: "rgba(255,255,255,0.03)", borderRadius: 10,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: "#fff", fontWeight: 600 }}>Apparaître dans le classement</div>
+                    <div style={{ fontSize: 11, color: "#666" }}>
+                      {(user.appearInLeaderboard ?? true) ? "Visible par les autres users" : "Masqué"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const next = !(user.appearInLeaderboard ?? true);
+                      try {
+                        const r = await authedFetch("/api/auth/me", {
+                          method: "POST",
+                          body: JSON.stringify({ appearInLeaderboard: next }),
+                        });
+                        if (r.ok) {
+                          const d = await r.json();
+                          onUserUpdate?.(d.user);
+                        }
+                      } catch {}
+                    }}
+                    style={{
+                      width: 48, height: 26, borderRadius: 99, border: "none",
+                      background: (user.appearInLeaderboard ?? true) ? "#ffd700" : "rgba(255,255,255,0.15)",
+                      position: "relative", transition: "all 0.2s", cursor: "pointer",
+                    }}
+                    aria-label="Apparaître ou non dans le classement"
+                  >
+                    <div style={{
+                      width: 20, height: 20, borderRadius: "50%", background: "#fff",
+                      position: "absolute", top: 3, left: (user.appearInLeaderboard ?? true) ? 25 : 3,
                       transition: "left 0.2s",
                     }} />
                   </button>
