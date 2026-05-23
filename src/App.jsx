@@ -14,10 +14,10 @@ const DAYS = [
     accent: "#2979d4",
     glow: "rgba(41,121,212,0.25)",
     exercises: [
-      { name: "Développé couché", sets: 4, reps: "10–12", rest: "90s", muscle: "Pectoraux", tip: "Descends la barre lentement jusqu'à la poitrine, pousse de manière explosive." },
+      { name: "Développé couché", sets: 4, reps: "10–12", rest: "90s", muscle: "Pectoraux", tip: "Descends la barre lentement jusqu'à la poitrine, pousse de manière explosive.", hasLoad: true },
       { name: "Pompes larges", sets: 3, reps: "15–20", rest: "60s", muscle: "Pecs ext.", tip: "Mains écartées au-delà des épaules pour cibler les pectoraux extérieurs." },
-      { name: "Écarté haltères", sets: 3, reps: "12", rest: "75s", muscle: "Pecs int.", tip: "Légère flexion des coudes, contrôle absolu en descente." },
-      { name: "Extension triceps", sets: 3, reps: "12", rest: "60s", muscle: "Triceps", tip: "Garde le coude fixe et haut, ne bouge que l'avant-bras." },
+      { name: "Écarté haltères", sets: 3, reps: "12", rest: "75s", muscle: "Pecs int.", tip: "Légère flexion des coudes, contrôle absolu en descente.", hasLoad: true },
+      { name: "Extension triceps", sets: 3, reps: "12", rest: "60s", muscle: "Triceps", tip: "Garde le coude fixe et haut, ne bouge que l'avant-bras.", hasLoad: true },
       { name: "Dips sur chaise", sets: 3, reps: "12–15", rest: "60s", muscle: "Triceps", tip: "Corps proche de la chaise, coudes vers l'arrière." },
     ],
   },
@@ -49,11 +49,11 @@ const DAYS = [
     accent: "#1aa86a",
     glow: "rgba(26,168,106,0.25)",
     exercises: [
-      { name: "Curl biceps haltères", sets: 4, reps: "12", rest: "60s", muscle: "Biceps", tip: "Coudes collés au corps, supination complète en haut du mouvement." },
-      { name: "Curl marteau", sets: 3, reps: "12", rest: "60s", muscle: "Biceps long", tip: "Prises neutres (paumes face à face), mouvement lent et contrôlé." },
-      { name: "Rowing haltère", sets: 3, reps: "10/côté", rest: "75s", muscle: "Grand dorsal", tip: "Appuie un genou sur le banc, tire le coude vers le plafond." },
-      { name: "Élévations latérales", sets: 3, reps: "15", rest: "60s", muscle: "Épaules", tip: "Légère flexion du coude, monte jusqu'à hauteur d'épaule max." },
-      { name: "Développé militaire", sets: 3, reps: "12", rest: "75s", muscle: "Épaules + triceps", tip: "Pousse verticalement sans creuser le bas du dos." },
+      { name: "Curl biceps haltères", sets: 4, reps: "12", rest: "60s", muscle: "Biceps", tip: "Coudes collés au corps, supination complète en haut du mouvement.", hasLoad: true },
+      { name: "Curl marteau", sets: 3, reps: "12", rest: "60s", muscle: "Biceps long", tip: "Prises neutres (paumes face à face), mouvement lent et contrôlé.", hasLoad: true },
+      { name: "Rowing haltère", sets: 3, reps: "10/côté", rest: "75s", muscle: "Grand dorsal", tip: "Appuie un genou sur le banc, tire le coude vers le plafond.", hasLoad: true },
+      { name: "Élévations latérales", sets: 3, reps: "15", rest: "60s", muscle: "Épaules", tip: "Légère flexion du coude, monte jusqu'à hauteur d'épaule max.", hasLoad: true },
+      { name: "Développé militaire", sets: 3, reps: "12", rest: "75s", muscle: "Épaules + triceps", tip: "Pousse verticalement sans creuser le bas du dos.", hasLoad: true },
     ],
   },
   {
@@ -68,7 +68,7 @@ const DAYS = [
       { name: "Pompes diamant", sets: 3, reps: "12–15", rest: "60s", muscle: "Triceps + pecs", tip: "Mains rapprochées formant un losange, coudes vers l'arrière." },
       { name: "Squat au poids du corps", sets: 3, reps: "20", rest: "60s", muscle: "Cuisses + fessiers", tip: "Dos droit, genoux dans l'axe des pieds, descends à 90°." },
       { name: "Planche latérale", sets: 3, reps: "30s/côté", rest: "30s", muscle: "Obliques", tip: "Hanche bien levée, corps parfaitement aligné de la tête aux pieds." },
-      { name: "Fentes avant haltères", sets: 3, reps: "12/jambe", rest: "60s", muscle: "Cuisses + équilibre", tip: "Genou arrière proche du sol sans le toucher, torse droit." },
+      { name: "Fentes avant haltères", sets: 3, reps: "12/jambe", rest: "60s", muscle: "Cuisses + équilibre", tip: "Genou arrière proche du sol sans le toucher, torse droit.", hasLoad: true },
       { name: "Crunch bicycle", sets: 3, reps: "20", rest: "45s", muscle: "Abdos + obliques", tip: "Coude vers le genou opposé en alternance, cadence lente et contrôlée." },
       { name: "Gainage ventral final", sets: 3, reps: "60s", rest: "30s", muscle: "Sangle complète", tip: "Dernier effort de la semaine — tiens jusqu'au bout !" },
     ],
@@ -438,7 +438,18 @@ function VideoModal({ exercise, onClose }) {
   );
 }
 
-function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx }) {
+function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx, loadHistoryEntries, currentLoad, onLoadChange, exKey }) {
+  // Calcul dernière perf et record (si hasLoad)
+  let last = null, best = null;
+  if (ex.hasLoad && loadHistoryEntries?.length) {
+    last = loadHistoryEntries[loadHistoryEntries.length - 1];
+    best = loadHistoryEntries.reduce((b, e) => {
+      if (!b) return e;
+      if (e.weight > b.weight) return e;
+      if (e.weight === b.weight && e.reps > b.reps) return e;
+      return b;
+    }, null);
+  }
   return (
     <div
       className={`fade-up fade-up-${Math.min(idx + 1, 6)}`}
@@ -506,6 +517,75 @@ function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx })
             {ex.tip}
           </div>
 
+          {/* Tracking des charges (uniquement si hasLoad) */}
+          {ex.hasLoad && (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                marginTop: 10, padding: "10px 12px", borderRadius: 10,
+                background: "rgba(255,255,255,0.025)",
+                border: "1px solid rgba(255,255,255,0.06)",
+              }}
+            >
+              {/* Dernière perf + record */}
+              {(last || best) && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginBottom: 8, fontSize: 11, color: "#888" }}>
+                  {last && (
+                    <div>
+                      <span style={{ color: "#666" }}>📊 Dernière : </span>
+                      <span style={{ color: "#ccc", fontWeight: 600 }}>{last.weight}kg × {last.reps}</span>
+                    </div>
+                  )}
+                  {best && (best.weight !== last?.weight || best.reps !== last?.reps) && (
+                    <div>
+                      <span style={{ color: "#666" }}>🏆 Record : </span>
+                      <span style={{ color: "#ffd700", fontWeight: 600 }}>{best.weight}kg × {best.reps}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Inputs poids + reps */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ flex: 1, position: "relative" }}>
+                  <input
+                    type="text" inputMode="decimal"
+                    value={currentLoad?.weight ?? ""}
+                    onChange={(e) => { e.stopPropagation(); onLoadChange?.(exKey, "weight", e.target.value); }}
+                    onClick={(e) => e.stopPropagation()}
+                    placeholder="0"
+                    style={{
+                      width: "100%", padding: "8px 32px 8px 10px",
+                      background: "rgba(0,0,0,0.3)", border: `1px solid ${accent}30`,
+                      borderRadius: 8, color: "#fff", fontSize: 15, fontFamily: "inherit",
+                      outline: "none", textAlign: "right",
+                    }}
+                  />
+                  <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#666", pointerEvents: "none" }}>kg</span>
+                </div>
+                <span style={{ color: "#444", fontSize: 14 }}>×</span>
+                <div style={{ flex: 1, position: "relative" }}>
+                  <input
+                    type="text" inputMode="numeric"
+                    value={currentLoad?.reps ?? ""}
+                    onChange={(e) => { e.stopPropagation(); onLoadChange?.(exKey, "reps", e.target.value); }}
+                    onClick={(e) => e.stopPropagation()}
+                    placeholder="0"
+                    style={{
+                      width: "100%", padding: "8px 38px 8px 10px",
+                      background: "rgba(0,0,0,0.3)", border: `1px solid ${accent}30`,
+                      borderRadius: 8, color: "#fff", fontSize: 15, fontFamily: "inherit",
+                      outline: "none", textAlign: "right",
+                    }}
+                  />
+                  <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#666", pointerEvents: "none" }}>reps</span>
+                </div>
+              </div>
+              <div style={{ marginTop: 6, fontSize: 10, color: "#555", textAlign: "center" }}>
+                Coche l'exo pour enregistrer ta perf
+              </div>
+            </div>
+          )}
+
           {/* Demo button */}
           <button
             onClick={(e) => { e.stopPropagation(); onPlayVideo(); }}
@@ -532,6 +612,8 @@ export default function App({ user, onLogout, onUserUpdate }) {
   const [activeDay, setActiveDay] = useState(0);
   const [checked, setChecked] = useState({});
   const [history, setHistory] = useState([]);
+  const [loadHistory, setLoadHistory] = useState({}); // { "1-0": [{weight,reps,weekKey,...}, ...] }
+  const [loads, setLoads] = useState({}); // valeurs en cours dans les inputs : { "1-0": { weight: "50", reps: "12" } }
   const [tab, setTab] = useState("programme"); // programme | planning | conseils | historique
   const [videoExercise, setVideoExercise] = useState(null);
   const [restTimer, setRestTimer] = useState(null); // { endsAt, totalSeconds, exerciseName, nextExerciseName }
@@ -545,14 +627,24 @@ export default function App({ user, onLogout, onUserUpdate }) {
     let cancelled = false;
     (async () => {
       try {
-        // 1. Fetch progress + history
-        let [pRes, hRes] = await Promise.all([
+        // 1. Fetch progress + history + loads
+        let [pRes, hRes, lRes] = await Promise.all([
           authedFetch("/api/progress"),
           authedFetch("/api/history"),
+          authedFetch("/api/loads"),
         ]);
         if (!pRes.ok || !hRes.ok) throw new Error("Erreur de chargement");
         let progress = await pRes.json();
         let historyData = (await hRes.json()).history || [];
+        const loadsData = lRes.ok ? ((await lRes.json()).loads || {}) : {};
+        // Pré-remplir les inputs avec les dernières valeurs connues
+        const initialLoads = {};
+        for (const [exKey, hist] of Object.entries(loadsData)) {
+          const last = hist[hist.length - 1];
+          if (last) initialLoads[exKey] = { weight: String(last.weight), reps: String(last.reps) };
+        }
+        setLoadHistory(loadsData);
+        setLoads(initialLoads);
 
         // 2. Migration : si Firestore est vide ET localStorage a quelque chose, on importe
         const localChecked = loadChecked();
@@ -685,6 +777,36 @@ export default function App({ user, onLogout, onUserUpdate }) {
         method: "POST",
         body: JSON.stringify({ checked: next }),
       }).catch(() => { /* offline : sera repris au prochain login */ });
+
+      // Si on COCHE un exo avec poids ET que les inputs sont remplis → push la perf
+      if (!wasChecked && exercise?.hasLoad) {
+        const load = loads[key];
+        const w = parseFloat(load?.weight);
+        const r = parseInt(load?.reps, 10);
+        if (Number.isFinite(w) && w > 0 && Number.isFinite(r) && r > 0) {
+          const weekKey = getISOWeek().key;
+          authedFetch("/api/loads", {
+            method: "POST",
+            body: JSON.stringify({ exKey: key, weight: w, reps: r, weekKey }),
+          })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+              if (data?.success && data.entry) {
+                setLoadHistory(prev => {
+                  const existing = prev[key] || [];
+                  const last = existing[existing.length - 1];
+                  const newEntry = { weight: data.entry.weight, reps: data.entry.reps, weekKey };
+                  const newArr = (last && last.weekKey === weekKey)
+                    ? [...existing.slice(0, -1), newEntry]
+                    : [...existing, newEntry];
+                  return { ...prev, [key]: newArr };
+                });
+              }
+            })
+            .catch(() => {});
+        }
+      }
+
       // Démarre le timer de repos uniquement quand on COCHE (et qu'il y a un repos défini)
       if (!wasChecked && exercise) {
         const seconds = parseRestSeconds(exercise.rest);
@@ -699,6 +821,17 @@ export default function App({ user, onLogout, onUserUpdate }) {
       }
       return next;
     });
+  }, [loads]);
+
+  const updateLoad = useCallback((exKey, field, value) => {
+    // Filtre : que des chiffres (et 1 point pour weight)
+    const clean = field === "weight"
+      ? value.replace(/[^\d.]/g, "").replace(/(\..*?)\..*/g, "$1")
+      : value.replace(/\D/g, "");
+    setLoads(prev => ({
+      ...prev,
+      [exKey]: { ...prev[exKey], [field]: clean },
+    }));
   }, []);
 
   const adjustTimer = useCallback((delta) => {
@@ -832,15 +965,22 @@ export default function App({ user, onLogout, onUserUpdate }) {
 
             {/* Exercises */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {day.exercises.map((ex, i) => (
-                <ExerciseCard
-                  key={i} ex={ex} idx={i}
-                  checked={!!checked[`${day.id}-${i}`]}
-                  onToggle={() => toggle(day.id, i, ex, day.exercises[i + 1])}
-                  onPlayVideo={() => playVideo(ex)}
-                  accent={day.accent} glow={day.glow}
-                />
-              ))}
+              {day.exercises.map((ex, i) => {
+                const exKey = `${day.id}-${i}`;
+                return (
+                  <ExerciseCard
+                    key={i} ex={ex} idx={i}
+                    checked={!!checked[exKey]}
+                    onToggle={() => toggle(day.id, i, ex, day.exercises[i + 1])}
+                    onPlayVideo={() => playVideo(ex)}
+                    accent={day.accent} glow={day.glow}
+                    exKey={exKey}
+                    loadHistoryEntries={loadHistory[exKey]}
+                    currentLoad={loads[exKey]}
+                    onLoadChange={updateLoad}
+                  />
+                );
+              })}
             </div>
 
             {/* Reset button */}
@@ -978,6 +1118,68 @@ export default function App({ user, onLogout, onUserUpdate }) {
                 }} />
               </div>
             </div>
+
+            {/* ── Records par exercice ── */}
+            {(() => {
+              const records = [];
+              DAYS.forEach((d) => {
+                d.exercises.forEach((ex, i) => {
+                  if (!ex.hasLoad) return;
+                  const key = `${d.id}-${i}`;
+                  const hist = loadHistory[key];
+                  if (!hist?.length) return;
+                  const best = hist.reduce((b, e) => {
+                    if (!b) return e;
+                    if (e.weight > b.weight) return e;
+                    if (e.weight === b.weight && e.reps > b.reps) return e;
+                    return b;
+                  }, null);
+                  const last = hist[hist.length - 1];
+                  records.push({ exName: ex.name, dayLabel: d.label, dayAccent: d.accent, best, last, sessions: hist.length });
+                });
+              });
+              if (records.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                    <span style={{ fontSize: 14 }}>🏆</span>
+                    <div style={{ fontSize: 10, letterSpacing: "0.2em", color: "#888", textTransform: "uppercase" }}>
+                      Records personnels
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {records.map((r, i) => (
+                      <div key={i} style={{
+                        background: "rgba(255,215,0,0.04)",
+                        border: "1px solid rgba(255,215,0,0.15)",
+                        borderRadius: 10, padding: "10px 12px",
+                        display: "flex", alignItems: "center", gap: 10,
+                      }}>
+                        <div style={{
+                          fontSize: 9, color: r.dayAccent, padding: "2px 6px", borderRadius: 6,
+                          background: `${r.dayAccent}15`, border: `1px solid ${r.dayAccent}30`,
+                          fontWeight: 700, letterSpacing: "0.08em", flexShrink: 0,
+                        }}>{r.dayLabel}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: "#fff", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {r.exName}
+                          </div>
+                          <div style={{ fontSize: 10, color: "#666", marginTop: 2 }}>
+                            Dernière : <span style={{ color: "#aaa" }}>{r.last.weight}kg × {r.last.reps}</span> · {r.sessions} séance{r.sessions > 1 ? "s" : ""}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, color: "#ffd700", lineHeight: 1 }}>
+                            {r.best.weight}<span style={{ fontSize: 11, color: "#aaa" }}>kg</span>
+                          </div>
+                          <div style={{ fontSize: 10, color: "#888", marginTop: 2 }}>× {r.best.reps} reps</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ── Liste des semaines passées ── */}
             {history.length === 0 ? (

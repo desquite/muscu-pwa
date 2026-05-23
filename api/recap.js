@@ -3,13 +3,53 @@
 // Appelé automatiquement par le frontend quand l'utilisateur atteint 24/24.
 
 import { sendWhatsApp } from "./_lib/wasender.js";
-import { getUserFromAuth } from "./_lib/firebase.js";
+import { db, getUserFromAuth } from "./_lib/firebase.js";
+import { getExerciseByKey, getISOWeek } from "./_lib/programme.js";
 
 const TROPHIES = [
   "🏆", "🥇", "🔥", "💪", "⚡", "🚀", "🌟", "💎", "👑", "🎯",
 ];
 
-function recapMessage({ done, total, streak, record, totalAllTime }) {
+// Calcule les records battus cette semaine en comparant la dernière entrée à l'historique précédent
+async function getWeeklyProgressions(phone) {
+  try {
+    const snap = await db.collection("muscu_loads").doc(phone).get();
+    if (!snap.exists) return [];
+    const data = snap.data() || {};
+    const currentWeekKey = getISOWeek().key;
+    const records = [];
+    for (const [exKey, hist] of Object.entries(data)) {
+      if (!Array.isArray(hist) || hist.length === 0) continue;
+      const last = hist[hist.length - 1];
+      if (last?.weekKey !== currentWeekKey) continue;
+      const previous = hist.slice(0, -1);
+      const prevBest = previous.reduce((b, e) => {
+        if (!b) return e;
+        if (e.weight > b.weight) return e;
+        if (e.weight === b.weight && e.reps > b.reps) return e;
+        return b;
+      }, null);
+      const isPR = !prevBest
+        || last.weight > prevBest.weight
+        || (last.weight === prevBest.weight && last.reps > prevBest.reps);
+      if (isPR) {
+        const ex = getExerciseByKey(exKey);
+        records.push({
+          name: ex?.name || exKey,
+          weight: last.weight,
+          reps: last.reps,
+          prevWeight: prevBest?.weight,
+          prevReps: prevBest?.reps,
+        });
+      }
+    }
+    return records;
+  } catch {
+    return [];
+  }
+}
+
+function recapMessage({ done, total, streak, record, totalAllTime, progressions = [] }) {
   const perfect = done === total;
   const trophy = TROPHIES[(streak - 1) % TROPHIES.length] || "🏆";
 
@@ -41,6 +81,19 @@ function recapMessage({ done, total, streak, record, totalAllTime }) {
     lines.push(`📊 Total depuis le début : *${totalAllTime} exos*`);
   }
 
+  if (progressions.length > 0) {
+    lines.push("");
+    lines.push(`🔥 *Records battus cette semaine (${progressions.length})*`);
+    progressions.slice(0, 5).forEach(p => {
+      if (p.prevWeight) {
+        lines.push(`• ${p.name} : ${p.prevWeight}kg → *${p.weight}kg* × ${p.reps}`);
+      } else {
+        lines.push(`• ${p.name} : *${p.weight}kg × ${p.reps}* (1ère perf 🎉)`);
+      }
+    });
+    if (progressions.length > 5) lines.push(`...et ${progressions.length - 5} de plus`);
+  }
+
   lines.push("");
   lines.push("━━━━━━━━━━━━━━━");
   lines.push("Lundi on remet ça 💥");
@@ -64,9 +117,12 @@ export default async function handler(req, res) {
 
     if (total === 0) return res.status(400).json({ error: "Paramètre 'total' requis" });
 
-    const message = recapMessage({ done, total, streak, record, totalAllTime });
+    // Bonus : on regarde les records battus cette semaine
+    const progressions = await getWeeklyProgressions(user.phone);
+
+    const message = recapMessage({ done, total, streak, record, totalAllTime, progressions });
     await sendWhatsApp(message, user.phone);
-    return res.status(200).json({ success: true, to: user.phone });
+    return res.status(200).json({ success: true, to: user.phone, progressionsCount: progressions.length });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
