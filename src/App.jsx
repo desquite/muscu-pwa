@@ -93,14 +93,124 @@ const TIPS = [
 ];
 
 const STORAGE_KEY = "muscu_checked_v1";
+const META_KEY = "muscu_meta_v1";
+const HISTORY_KEY = "muscu_history_v1";
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
-function loadChecked() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
-  catch { return {}; }
+function safeLoad(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+  catch { return fallback; }
 }
-function saveChecked(data) {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+function safeSave(key, data) {
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch {}
+}
+
+const loadChecked = () => safeLoad(STORAGE_KEY, {});
+const saveChecked = (d) => safeSave(STORAGE_KEY, d);
+const loadMeta = () => safeLoad(META_KEY, {});
+const saveMeta = (d) => safeSave(META_KEY, d);
+const loadHistory = () => safeLoad(HISTORY_KEY, []);
+const saveHistory = (d) => safeSave(HISTORY_KEY, d);
+
+// ─── ISO WEEK ────────────────────────────────────────────────────────────────
+function getISOWeek(date = new Date()) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNum = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+  return {
+    year: d.getUTCFullYear(),
+    weekNum,
+    key: `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`,
+  };
+}
+
+function getWeekRange(year, weekNum) {
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (weekNum - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  return { start: monday, end: sunday };
+}
+
+function formatDateShort(d) {
+  return new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+}
+
+// ─── RESET AUTO + ARCHIVAGE ──────────────────────────────────────────────────
+function initWeekState(DAYS) {
+  const currentWeek = getISOWeek();
+  const meta = loadMeta();
+  const checked = loadChecked();
+
+  // Première fois : on initialise juste la semaine courante
+  if (!meta.currentWeekKey) {
+    saveMeta({ currentWeekKey: currentWeek.key });
+    return checked;
+  }
+
+  // Nouvelle semaine détectée → archiver + reset
+  if (meta.currentWeekKey !== currentWeek.key) {
+    const totalExos = DAYS.reduce((a, d) => a + d.exercises.length, 0);
+    const doneCount = Object.values(checked).filter(Boolean).length;
+
+    // On n'archive que si quelque chose a été fait (évite les semaines vides)
+    if (doneCount > 0) {
+      const history = loadHistory();
+      const [oldYear, oldWeekStr] = meta.currentWeekKey.split("-W");
+      const oldWeekNum = parseInt(oldWeekStr, 10);
+      const range = getWeekRange(parseInt(oldYear, 10), oldWeekNum);
+      history.unshift({
+        weekKey: meta.currentWeekKey,
+        year: parseInt(oldYear, 10),
+        weekNum: oldWeekNum,
+        dateStart: range.start.toISOString().slice(0, 10),
+        dateEnd: range.end.toISOString().slice(0, 10),
+        done: doneCount,
+        total: totalExos,
+        perfect: doneCount === totalExos,
+        archivedAt: new Date().toISOString(),
+      });
+      saveHistory(history);
+    }
+
+    saveChecked({});
+    saveMeta({ currentWeekKey: currentWeek.key });
+    return {};
+  }
+
+  return checked;
+}
+
+// ─── STATS ───────────────────────────────────────────────────────────────────
+function computeStats(history, currentChecked, DAYS) {
+  const totalExos = DAYS.reduce((a, d) => a + d.exercises.length, 0);
+  const currentDone = Object.values(currentChecked).filter(Boolean).length;
+  const currentPerfect = currentDone === totalExos && totalExos > 0;
+
+  // Série en cours : semaines parfaites consécutives à partir de maintenant
+  let currentStreak = currentPerfect ? 1 : 0;
+  for (const w of history) {
+    if (w.perfect) currentStreak++;
+    else break;
+  }
+
+  // Record : plus longue série jamais
+  let bestStreak = 0, temp = 0;
+  const fullList = currentPerfect ? [{ perfect: true }, ...history] : [...history];
+  for (const w of fullList) {
+    if (w.perfect) { temp++; bestStreak = Math.max(bestStreak, temp); }
+    else temp = 0;
+  }
+
+  const totalExoFaits = currentDone + history.reduce((a, w) => a + w.done, 0);
+  const totalSemaines = history.length + (currentDone > 0 ? 1 : 0);
+  const semainesParfaites = history.filter(w => w.perfect).length + (currentPerfect ? 1 : 0);
+
+  return { currentStreak, bestStreak, totalExoFaits, totalSemaines, semainesParfaites, currentPerfect };
 }
 
 // ─── COMPONENTS ──────────────────────────────────────────────────────────────
@@ -270,10 +380,32 @@ function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx })
 // ─── APP ─────────────────────────────────────────────────────────────────────
 export default function App() {
   const [activeDay, setActiveDay] = useState(0);
-  const [checked, setChecked] = useState(loadChecked);
-  const [tab, setTab] = useState("programme"); // programme | planning | conseils
+  const [checked, setChecked] = useState(() => initWeekState(DAYS));
+  const [history, setHistory] = useState(loadHistory);
+  const [tab, setTab] = useState("programme"); // programme | planning | conseils | historique
   const [videoExercise, setVideoExercise] = useState(null);
   const [testStatus, setTestStatus] = useState({}); // { programme: "idle|loading|ok|err", teaser: ... }
+
+  // Stats globales (cumul history + semaine courante)
+  const stats = computeStats(history, checked, DAYS);
+
+  // ── Trigger récap WhatsApp automatique quand 24/24 atteint (une seule fois par semaine)
+  useEffect(() => {
+    const totalEx = DAYS.reduce((a, d) => a + d.exercises.length, 0);
+    const totalDone = Object.values(checked).filter(Boolean).length;
+    if (totalDone !== totalEx || totalEx === 0) return;
+    const meta = loadMeta();
+    if (meta.recapSent === meta.currentWeekKey) return; // déjà envoyé pour cette semaine
+    const url = `/api/recap?done=${totalDone}&total=${totalEx}`
+      + `&streak=${stats.currentStreak}`
+      + `&record=${stats.bestStreak}`
+      + `&totalAllTime=${stats.totalExoFaits}`;
+    fetch(url)
+      .then(r => {
+        if (r.ok) saveMeta({ ...meta, recapSent: meta.currentWeekKey });
+      })
+      .catch(() => { /* silent fail */ });
+  }, [checked, stats.currentStreak, stats.bestStreak, stats.totalExoFaits]);
 
   const testRappel = useCallback(async (type) => {
     setTestStatus(s => ({ ...s, [type]: "loading" }));
@@ -354,12 +486,12 @@ export default function App() {
 
         {/* ── TAB NAV ── */}
         <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.04)", borderRadius: 12, padding: 4 }}>
-          {[["programme", "Programme"], ["planning", "Planning"], ["conseils", "Conseils"]].map(([key, label]) => (
+          {[["programme", "Programme"], ["planning", "Planning"], ["historique", "Historique"], ["conseils", "Conseils"]].map(([key, label]) => (
             <button key={key} onClick={() => setTab(key)} style={{
               flex: 1, padding: "8px 4px", borderRadius: 8, border: "none",
               background: tab === key ? "rgba(255,255,255,0.1)" : "transparent",
               color: tab === key ? "#fff" : "#666",
-              fontSize: 12, fontWeight: 600, letterSpacing: "0.04em",
+              fontSize: 11, fontWeight: 600, letterSpacing: "0.03em",
               transition: "all 0.2s",
             }}>{label}</button>
           ))}
@@ -510,6 +642,125 @@ export default function App() {
               </div>
               <div style={{ textAlign: "right", fontSize: 11, color: "#555", marginTop: 6 }}>{globalPct}% complété</div>
             </div>
+          </div>
+        )}
+
+        {/* ═══ HISTORIQUE TAB ═══ */}
+        {tab === "historique" && (
+          <div className="fade-up">
+            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 32, letterSpacing: "0.08em", marginBottom: 4, color: "#fff" }}>
+              HISTORIQUE
+            </div>
+            <div style={{ fontSize: 12, color: "#555", marginBottom: 20 }}>
+              Tes performances semaine par semaine. Reset auto chaque lundi.
+            </div>
+
+            {/* ── Cartes stats ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+              {[
+                { label: "Série en cours", value: stats.currentStreak, suffix: stats.currentStreak > 1 ? "semaines" : "semaine", icon: "🔥", color: "#ff6b35" },
+                { label: "Record perso", value: stats.bestStreak, suffix: stats.bestStreak > 1 ? "semaines" : "semaine", icon: "🏆", color: "#ffd700" },
+                { label: "Semaines parfaites", value: stats.semainesParfaites, suffix: `/ ${stats.totalSemaines || 0}`, icon: "✅", color: "#1aa86a" },
+                { label: "Total exos", value: stats.totalExoFaits, suffix: "faits", icon: "💪", color: "#2979d4" },
+              ].map((s) => (
+                <div key={s.label} style={{
+                  background: `${s.color}10`,
+                  border: `1px solid ${s.color}30`,
+                  borderRadius: 14, padding: "14px 12px",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <span style={{ fontSize: 16 }}>{s.icon}</span>
+                    <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: "0.1em" }}>{s.label}</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                    <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 28, color: s.color, lineHeight: 1 }}>{s.value}</div>
+                    <div style={{ fontSize: 10, color: "#666" }}>{s.suffix}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Semaine en cours ── */}
+            <div style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              borderRadius: 14, padding: "14px 16px", marginBottom: 12,
+            }}>
+              <div style={{ fontSize: 10, letterSpacing: "0.2em", color: "#666", textTransform: "uppercase", marginBottom: 6 }}>
+                Semaine en cours
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 22, color: "#fff" }}>
+                  {totalDone}/{totalEx} exercices
+                </div>
+                <div style={{ fontSize: 11, color: stats.currentPerfect ? "#1aa86a" : "#888" }}>
+                  {stats.currentPerfect ? "✓ Parfait !" : `${Math.round((totalDone / totalEx) * 100)}%`}
+                </div>
+              </div>
+              <div style={{ marginTop: 10, background: "rgba(255,255,255,0.06)", borderRadius: 99, height: 4, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%", width: `${Math.round((totalDone / totalEx) * 100)}%`,
+                  background: stats.currentPerfect ? "#1aa86a" : "linear-gradient(90deg, #2979d4, #d45a1a)",
+                  transition: "width 0.4s ease",
+                }} />
+              </div>
+            </div>
+
+            {/* ── Liste des semaines passées ── */}
+            {history.length === 0 ? (
+              <div style={{
+                textAlign: "center", padding: "30px 20px",
+                background: "rgba(255,255,255,0.02)",
+                border: "1px dashed rgba(255,255,255,0.08)",
+                borderRadius: 14, color: "#555", fontSize: 13, lineHeight: 1.6,
+              }}>
+                📅 Pas encore d'historique<br/>
+                <span style={{ fontSize: 11, color: "#444" }}>Tes semaines termin&eacute;es appara&icirc;tront ici.</span>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.2em", color: "#666", textTransform: "uppercase", marginBottom: 4 }}>
+                  Semaines passées
+                </div>
+                {history.map((w) => {
+                  const pct = Math.round((w.done / w.total) * 100);
+                  const color = w.perfect ? "#1aa86a" : pct >= 75 ? "#d4b41a" : "#d45a1a";
+                  return (
+                    <div key={w.weekKey} style={{
+                      background: "rgba(255,255,255,0.03)",
+                      border: `1px solid ${color}30`,
+                      borderRadius: 12, padding: "12px 14px",
+                      display: "flex", alignItems: "center", gap: 12,
+                    }}>
+                      <div style={{
+                        width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+                        background: `${color}15`, border: `1px solid ${color}40`,
+                        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <div style={{ fontSize: 8, color: "#888", letterSpacing: "0.1em" }}>S</div>
+                        <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 16, color }}>{w.weekNum}</div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                          <div style={{ fontSize: 13, color: "#ccc", fontWeight: 600 }}>
+                            {formatDateShort(w.dateStart)} – {formatDateShort(w.dateEnd)}
+                          </div>
+                          <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 18, color }}>
+                            {w.done}/{w.total}
+                          </div>
+                        </div>
+                        <div style={{ marginTop: 6, background: "rgba(255,255,255,0.05)", borderRadius: 99, height: 3, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${pct}%`, background: color }} />
+                        </div>
+                        <div style={{ marginTop: 4, fontSize: 10, color: "#666" }}>
+                          {w.perfect ? "🏆 Semaine parfaite" : `${pct}%`}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

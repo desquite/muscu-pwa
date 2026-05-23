@@ -3,6 +3,8 @@
 // GET /api/rappel?type=teaser            → cron 20h    (teaser du lendemain ou conseil)
 // GET /api/rappel?type=programme&test=1  → test manuel depuis l'app
 
+import { sendWhatsApp } from "./_lib/wasender.js";
+
 // Programme miroir de src/App.jsx (gardé synchro à la main pour éviter un import)
 const DAYS = [
   {
@@ -330,23 +332,6 @@ function conseilMessage(weekday) {
   const c = pickConseil(weekday);
   if (!c) return null;
   return withEncouragement([c.titre, "", ...c.corps]);
-}
-
-async function sendWhatsApp(message) {
-  const apiKey = process.env.WASENDER_API_KEY;
-  const sessionId = process.env.WASENDER_SESSION_ID;
-  const to = process.env.MY_PHONE_NUMBER;
-  if (!apiKey || !sessionId || !to) {
-    throw new Error("Variables d'env manquantes (WASENDER_API_KEY / WASENDER_SESSION_ID / MY_PHONE_NUMBER)");
-  }
-  const r = await fetch("https://wasenderapi.com/api/send-message", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ sessionId, to, text: message }),
-  });
-  const txt = await r.text();
-  if (!r.ok) throw new Error(`Wasender ${r.status}: ${txt}`);
-  return txt;
 }
 
 export default async function handler(req, res) {
