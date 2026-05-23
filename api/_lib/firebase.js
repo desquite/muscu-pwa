@@ -8,9 +8,10 @@ let _db = null;
 
 export function getDb() {
   if (_db) return _db;
-  const projectId = process.env.FIREBASE_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  // .trim() défensif : supprime tabs / espaces / newlines parasites au copier-coller dans Vercel UI
+  const projectId = process.env.FIREBASE_PROJECT_ID?.trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.trim().replace(/\\n/g, "\n");
   if (!projectId || !clientEmail || !privateKey) {
     throw new Error(
       "Firebase non configuré : ajoute FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL et FIREBASE_PRIVATE_KEY dans les Environment Variables de Vercel."
