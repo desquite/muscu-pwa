@@ -273,6 +273,21 @@ export default function App() {
   const [checked, setChecked] = useState(loadChecked);
   const [tab, setTab] = useState("programme"); // programme | planning | conseils
   const [videoExercise, setVideoExercise] = useState(null);
+  const [testStatus, setTestStatus] = useState({}); // { programme: "idle|loading|ok|err", teaser: ... }
+
+  const testRappel = useCallback(async (type) => {
+    setTestStatus(s => ({ ...s, [type]: "loading" }));
+    try {
+      const r = await fetch(`/api/rappel?type=${type}&test=1`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      setTestStatus(s => ({ ...s, [type]: "ok" }));
+      setTimeout(() => setTestStatus(s => ({ ...s, [type]: "idle" })), 3000);
+    } catch (e) {
+      setTestStatus(s => ({ ...s, [type]: "err", [`${type}_msg`]: e.message }));
+      setTimeout(() => setTestStatus(s => ({ ...s, [type]: "idle" })), 5000);
+    }
+  }, []);
 
   const day = DAYS[activeDay];
 
@@ -539,6 +554,67 @@ export default function App() {
                   <div style={{ fontSize: 13, color: "#aaa", lineHeight: 1.5 }}>{val}</div>
                 </div>
               ))}
+            </div>
+
+            {/* ── Rappels WhatsApp ── */}
+            <div style={{
+              marginTop: 20, background: "rgba(37,211,102,0.06)",
+              border: "1px solid rgba(37,211,102,0.25)", borderRadius: 16, padding: "16px 18px",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                <span style={{ fontSize: 22 }}>💬</span>
+                <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: "0.06em", color: "#25D366" }}>
+                  RAPPELS WHATSAPP
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: "#888", lineHeight: 1.5, marginBottom: 14 }}>
+                Tu reçois chaque jour à <b>17h30</b> le programme du jour (ou un conseil OFF),
+                et la veille à <b>20h</b> un teaser de la séance du lendemain.
+              </div>
+              {[
+                ["programme", "Tester programme du jour", "📋"],
+                ["teaser", "Tester teaser de demain", "⏰"],
+              ].map(([key, label, icon]) => {
+                const status = testStatus[key] || "idle";
+                const bg = status === "ok" ? "rgba(37,211,102,0.2)"
+                         : status === "err" ? "rgba(255,82,82,0.15)"
+                         : "rgba(255,255,255,0.04)";
+                const border = status === "ok" ? "#25D366"
+                             : status === "err" ? "#ff5252"
+                             : "rgba(255,255,255,0.1)";
+                return (
+                  <button
+                    key={key}
+                    disabled={status === "loading"}
+                    onClick={() => testRappel(key)}
+                    style={{
+                      width: "100%", marginBottom: 8,
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "12px 14px", borderRadius: 12,
+                      background: bg, border: `1px solid ${border}`,
+                      color: "#fff", fontSize: 13, fontWeight: 600,
+                      transition: "all 0.2s", cursor: status === "loading" ? "wait" : "pointer",
+                      opacity: status === "loading" ? 0.6 : 1,
+                    }}
+                  >
+                    <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 16 }}>{icon}</span>
+                      {label}
+                    </span>
+                    <span style={{ fontSize: 11, color: status === "ok" ? "#25D366" : status === "err" ? "#ff5252" : "#666" }}>
+                      {status === "loading" ? "Envoi…"
+                        : status === "ok" ? "✓ Envoyé !"
+                        : status === "err" ? "✗ Erreur"
+                        : "Envoyer"}
+                    </span>
+                  </button>
+                );
+              })}
+              {(testStatus.programme === "err" || testStatus.teaser === "err") && (
+                <div style={{ fontSize: 11, color: "#ff5252", marginTop: 6, lineHeight: 1.5 }}>
+                  {testStatus.programme_msg || testStatus.teaser_msg || "Erreur inconnue"}
+                </div>
+              )}
             </div>
           </div>
         )}
