@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 // Pour ajouter une vidéo démo à un exercice : ajoute `video: "VIDEO_ID"`
@@ -213,6 +213,147 @@ function computeStats(history, currentChecked, DAYS) {
   return { currentStreak, bestStreak, totalExoFaits, totalSemaines, semainesParfaites, currentPerfect };
 }
 
+// ─── REST TIMER HELPERS ──────────────────────────────────────────────────────
+function parseRestSeconds(s) {
+  if (!s) return 0;
+  const match = String(s).match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+function playBeep(times = 2) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    for (let i = 0; i < times; i++) {
+      const t0 = ctx.currentTime + i * 0.4;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.setValueAtTime(880, t0);
+      osc.frequency.setValueAtTime(1320, t0 + 0.12);
+      gain.gain.setValueAtTime(0.001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.3);
+      osc.start(t0); osc.stop(t0 + 0.3);
+    }
+  } catch {}
+}
+
+function vibrate(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {}
+}
+
+function RestTimer({ timer, onSkip, onAdd, onComplete }) {
+  const [remaining, setRemaining] = useState(timer ? Math.max(0, Math.ceil((timer.endsAt - Date.now()) / 1000)) : 0);
+  const completedRef = useRef(false);
+
+  useEffect(() => {
+    if (!timer) return;
+    completedRef.current = false;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((timer.endsAt - Date.now()) / 1000));
+      setRemaining(left);
+      if (left === 0 && !completedRef.current) {
+        completedRef.current = true;
+        playBeep(2);
+        vibrate([300, 120, 300]);
+        // Laisser 4s pour afficher "GO !" puis auto-close
+        setTimeout(() => onComplete?.(), 4000);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [timer, onComplete]);
+
+  if (!timer) return null;
+
+  const done = remaining === 0;
+  const pct = Math.max(0, Math.min(100, (remaining / timer.totalSeconds) * 100));
+  const color = done ? "#1aa86a" : remaining <= 5 ? "#ff5252" : remaining <= 10 ? "#ffa726" : "#2979d4";
+
+  return (
+    <div style={{
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 90,
+      padding: "0 12px calc(env(safe-area-inset-bottom, 12px) + 12px)",
+      pointerEvents: "none",
+    }}>
+      <div style={{
+        maxWidth: 456, margin: "0 auto",
+        background: `linear-gradient(135deg, ${color}25, rgba(13,13,20,0.95))`,
+        backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
+        border: `1px solid ${color}55`,
+        borderRadius: 18, padding: "14px 16px",
+        boxShadow: `0 12px 40px ${color}40, 0 0 0 1px rgba(0,0,0,0.3)`,
+        pointerEvents: "auto",
+        animation: done ? "pulse 0.6s ease infinite" : "fadeUp 0.3s ease both",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.2em", color: "#888", textTransform: "uppercase", marginBottom: 2 }}>
+              {done ? "🔥 GO !" : "Repos en cours"}
+            </div>
+            <div style={{ fontSize: 13, color: "#ccc", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {done
+                ? (timer.nextExerciseName ? `Prochain : ${timer.nextExerciseName}` : "C'est reparti !")
+                : `Après "${timer.exerciseName}"`}
+            </div>
+          </div>
+          <div style={{
+            fontFamily: "'Bebas Neue', cursive", fontSize: 36, color, lineHeight: 1, minWidth: 60, textAlign: "right",
+          }}>
+            {done ? "GO" : `${remaining}s`}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ marginTop: 10, background: "rgba(255,255,255,0.06)", borderRadius: 99, height: 4, overflow: "hidden" }}>
+          <div style={{
+            height: "100%", width: `${pct}%`, background: color,
+            transition: "width 0.25s linear",
+          }} />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+          <button
+            onClick={() => onAdd(10)}
+            disabled={done}
+            style={{
+              flex: 1, padding: "8px", borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "rgba(255,255,255,0.04)", color: "#ccc",
+              fontSize: 12, fontWeight: 600,
+              opacity: done ? 0.3 : 1,
+            }}
+          >+10s</button>
+          <button
+            onClick={() => onAdd(-10)}
+            disabled={done || remaining <= 10}
+            style={{
+              flex: 1, padding: "8px", borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.1)",
+              background: "rgba(255,255,255,0.04)", color: "#ccc",
+              fontSize: 12, fontWeight: 600,
+              opacity: (done || remaining <= 10) ? 0.3 : 1,
+            }}
+          >-10s</button>
+          <button
+            onClick={onSkip}
+            style={{
+              flex: 2, padding: "8px", borderRadius: 10,
+              border: `1px solid ${color}60`,
+              background: `${color}25`, color: "#fff",
+              fontSize: 12, fontWeight: 700, letterSpacing: "0.06em",
+            }}
+          >{done ? "FERMER" : "PASSER"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── COMPONENTS ──────────────────────────────────────────────────────────────
 function ProgressRing({ pct, accent }) {
   const r = 28, cx = 34, cy = 34, stroke = 4;
@@ -384,6 +525,7 @@ export default function App() {
   const [history, setHistory] = useState(loadHistory);
   const [tab, setTab] = useState("programme"); // programme | planning | conseils | historique
   const [videoExercise, setVideoExercise] = useState(null);
+  const [restTimer, setRestTimer] = useState(null); // { endsAt, totalSeconds, exerciseName, nextExerciseName }
   const [testStatus, setTestStatus] = useState({}); // { programme: "idle|loading|ok|err", teaser: ... }
 
   // Stats globales (cumul history + semaine courante)
@@ -432,12 +574,34 @@ export default function App() {
     }
   }, [day.accent, day.glow]);
 
-  const toggle = useCallback((dayId, exIdx) => {
+  const toggle = useCallback((dayId, exIdx, exercise, nextExercise) => {
     setChecked(prev => {
       const key = `${dayId}-${exIdx}`;
-      const next = { ...prev, [key]: !prev[key] };
+      const wasChecked = !!prev[key];
+      const next = { ...prev, [key]: !wasChecked };
       saveChecked(next);
+      // Démarre le timer de repos uniquement quand on COCHE (et qu'il y a un repos défini)
+      if (!wasChecked && exercise) {
+        const seconds = parseRestSeconds(exercise.rest);
+        if (seconds > 0) {
+          setRestTimer({
+            endsAt: Date.now() + seconds * 1000,
+            totalSeconds: seconds,
+            exerciseName: exercise.name,
+            nextExerciseName: nextExercise?.name,
+          });
+        }
+      }
       return next;
+    });
+  }, []);
+
+  const adjustTimer = useCallback((delta) => {
+    setRestTimer(t => {
+      if (!t) return t;
+      const newEnds = t.endsAt + delta * 1000;
+      const newTotal = Math.max(t.totalSeconds + delta, 5);
+      return { ...t, endsAt: newEnds, totalSeconds: newTotal };
     });
   }, []);
 
@@ -563,7 +727,7 @@ export default function App() {
                 <ExerciseCard
                   key={i} ex={ex} idx={i}
                   checked={!!checked[`${day.id}-${i}`]}
-                  onToggle={() => toggle(day.id, i)}
+                  onToggle={() => toggle(day.id, i, ex, day.exercises[i + 1])}
                   onPlayVideo={() => playVideo(ex)}
                   accent={day.accent} glow={day.glow}
                 />
@@ -872,6 +1036,13 @@ export default function App() {
       </main>
 
       <VideoModal exercise={videoExercise} onClose={() => setVideoExercise(null)} />
+
+      <RestTimer
+        timer={restTimer}
+        onSkip={() => setRestTimer(null)}
+        onAdd={adjustTimer}
+        onComplete={() => setRestTimer(null)}
+      />
     </div>
   );
 }
