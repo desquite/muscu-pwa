@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
+// Pour ajouter une vidéo démo à un exercice : ajoute `video: "VIDEO_ID"`
+// où VIDEO_ID est l'ID YouTube (ex: pour https://youtu.be/dQw4w9WgXcQ → "dQw4w9WgXcQ")
 const DAYS = [
   {
     id: 1,
@@ -118,7 +120,63 @@ function ProgressRing({ pct, accent }) {
   );
 }
 
-function ExerciseCard({ ex, checked, onToggle, accent, glow, idx }) {
+function VideoModal({ exercise, onClose }) {
+  useEffect(() => {
+    if (!exercise) return;
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [exercise, onClose]);
+
+  if (!exercise) return null;
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)",
+      zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center",
+      padding: 16, backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)",
+      animation: "fadeUp 0.2s ease both",
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: "100%", maxWidth: 720, background: "#0d0d14",
+        borderRadius: 16, overflow: "hidden",
+        border: `1px solid ${exercise.accent}40`,
+        boxShadow: `0 20px 60px ${exercise.glow || "rgba(0,0,0,0.5)"}`,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: "0.2em", color: exercise.accent, textTransform: "uppercase", marginBottom: 2 }}>
+              Démonstration
+            </div>
+            <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: "0.05em", color: "#fff" }}>
+              {exercise.name}
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Fermer" style={{
+            background: "rgba(255,255,255,0.06)", border: "none",
+            color: "#fff", width: 34, height: 34, borderRadius: 10,
+            fontSize: 20, lineHeight: 1, flexShrink: 0,
+          }}>×</button>
+        </div>
+        <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, background: "#000" }}>
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${exercise.video}?autoplay=1&rel=0&modestbranding=1`}
+            title={exercise.name}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx }) {
   return (
     <div
       className={`fade-up fade-up-${Math.min(idx + 1, 6)}`}
@@ -185,6 +243,22 @@ function ExerciseCard({ ex, checked, onToggle, accent, glow, idx }) {
           }}>
             {ex.tip}
           </div>
+
+          {/* Demo button */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onPlayVideo(); }}
+            style={{
+              marginTop: 12, display: "inline-flex", alignItems: "center", gap: 6,
+              padding: "7px 12px", borderRadius: 99,
+              border: `1px solid ${accent}55`,
+              background: `${accent}15`, color: accent,
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
+              textTransform: "uppercase", transition: "all 0.2s",
+            }}
+          >
+            <span style={{ fontSize: 10 }}>▶</span>
+            {ex.video ? "Voir la démo" : "Chercher démo"}
+          </button>
         </div>
       </div>
     </div>
@@ -196,8 +270,18 @@ export default function App() {
   const [activeDay, setActiveDay] = useState(0);
   const [checked, setChecked] = useState(loadChecked);
   const [tab, setTab] = useState("programme"); // programme | planning | conseils
+  const [videoExercise, setVideoExercise] = useState(null);
 
   const day = DAYS[activeDay];
+
+  const playVideo = useCallback((ex) => {
+    if (ex.video) {
+      setVideoExercise({ ...ex, accent: day.accent, glow: day.glow });
+    } else {
+      const q = encodeURIComponent(`${ex.name} musculation tutoriel`);
+      window.open(`https://www.youtube.com/results?search_query=${q}`, "_blank", "noopener,noreferrer");
+    }
+  }, [day.accent, day.glow]);
 
   const toggle = useCallback((dayId, exIdx) => {
     setChecked(prev => {
@@ -331,6 +415,7 @@ export default function App() {
                   key={i} ex={ex} idx={i}
                   checked={!!checked[`${day.id}-${i}`]}
                   onToggle={() => toggle(day.id, i)}
+                  onPlayVideo={() => playVideo(ex)}
                   accent={day.accent} glow={day.glow}
                 />
               ))}
@@ -456,6 +541,8 @@ export default function App() {
           </div>
         )}
       </main>
+
+      <VideoModal exercise={videoExercise} onClose={() => setVideoExercise(null)} />
     </div>
   );
 }
