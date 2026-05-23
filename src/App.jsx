@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { authedFetch } from "./Login.jsx";
 
 // ─── DATA ────────────────────────────────────────────────────────────────────
 // Pour ajouter une vidéo démo à un exercice : ajoute `video: "VIDEO_ID"`
@@ -140,49 +141,57 @@ function formatDateShort(d) {
   return new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 }
 
-// ─── RESET AUTO + ARCHIVAGE ──────────────────────────────────────────────────
-function initWeekState(DAYS) {
+// ─── RESET AUTO + ARCHIVAGE (Firestore-aware) ────────────────────────────────
+// Calcule s'il faut archiver l'ancienne semaine + retourne le nouveau state.
+// `serverState` vient de /api/progress + /api/history (sans cache local prioritaire).
+function computeWeekRollover(serverChecked, serverCurrentWeekKey, serverHistory, DAYS) {
   const currentWeek = getISOWeek();
-  const meta = loadMeta();
-  const checked = loadChecked();
-
-  // Première fois : on initialise juste la semaine courante
-  if (!meta.currentWeekKey) {
-    saveMeta({ currentWeekKey: currentWeek.key });
-    return checked;
+  // Aucune semaine enregistrée encore (premier login) : on init juste la semaine actuelle
+  if (!serverCurrentWeekKey) {
+    return {
+      needSync: true,
+      newChecked: serverChecked || {},
+      newCurrentWeekKey: currentWeek.key,
+      newHistoryEntry: null,
+      shouldResetRecap: true,
+    };
   }
-
-  // Nouvelle semaine détectée → archiver + reset
-  if (meta.currentWeekKey !== currentWeek.key) {
-    const totalExos = DAYS.reduce((a, d) => a + d.exercises.length, 0);
-    const doneCount = Object.values(checked).filter(Boolean).length;
-
-    // On n'archive que si quelque chose a été fait (évite les semaines vides)
-    if (doneCount > 0) {
-      const history = loadHistory();
-      const [oldYear, oldWeekStr] = meta.currentWeekKey.split("-W");
-      const oldWeekNum = parseInt(oldWeekStr, 10);
-      const range = getWeekRange(parseInt(oldYear, 10), oldWeekNum);
-      history.unshift({
-        weekKey: meta.currentWeekKey,
-        year: parseInt(oldYear, 10),
-        weekNum: oldWeekNum,
-        dateStart: range.start.toISOString().slice(0, 10),
-        dateEnd: range.end.toISOString().slice(0, 10),
-        done: doneCount,
-        total: totalExos,
-        perfect: doneCount === totalExos,
-        archivedAt: new Date().toISOString(),
-      });
-      saveHistory(history);
-    }
-
-    saveChecked({});
-    saveMeta({ currentWeekKey: currentWeek.key });
-    return {};
+  // Même semaine : rien à faire
+  if (serverCurrentWeekKey === currentWeek.key) {
+    return {
+      needSync: false,
+      newChecked: serverChecked || {},
+      newCurrentWeekKey: serverCurrentWeekKey,
+      newHistoryEntry: null,
+      shouldResetRecap: false,
+    };
   }
-
-  return checked;
+  // Nouvelle semaine : archiver l'ancienne (si quelque chose a été fait) + reset
+  const totalExos = DAYS.reduce((a, d) => a + d.exercises.length, 0);
+  const doneCount = Object.values(serverChecked || {}).filter(Boolean).length;
+  let newHistoryEntry = null;
+  if (doneCount > 0) {
+    const [oldYear, oldWeekStr] = serverCurrentWeekKey.split("-W");
+    const oldWeekNum = parseInt(oldWeekStr, 10);
+    const range = getWeekRange(parseInt(oldYear, 10), oldWeekNum);
+    newHistoryEntry = {
+      weekKey: serverCurrentWeekKey,
+      year: parseInt(oldYear, 10),
+      weekNum: oldWeekNum,
+      dateStart: range.start.toISOString().slice(0, 10),
+      dateEnd: range.end.toISOString().slice(0, 10),
+      done: doneCount,
+      total: totalExos,
+      perfect: doneCount === totalExos,
+    };
+  }
+  return {
+    needSync: true,
+    newChecked: {},
+    newCurrentWeekKey: currentWeek.key,
+    newHistoryEntry,
+    shouldResetRecap: true,
+  };
 }
 
 // ─── STATS ───────────────────────────────────────────────────────────────────
@@ -519,40 +528,131 @@ function ExerciseCard({ ex, checked, onToggle, onPlayVideo, accent, glow, idx })
 }
 
 // ─── APP ─────────────────────────────────────────────────────────────────────
-export default function App() {
+export default function App({ user, onLogout, onUserUpdate }) {
   const [activeDay, setActiveDay] = useState(0);
-  const [checked, setChecked] = useState(() => initWeekState(DAYS));
-  const [history, setHistory] = useState(loadHistory);
+  const [checked, setChecked] = useState({});
+  const [history, setHistory] = useState([]);
   const [tab, setTab] = useState("programme"); // programme | planning | conseils | historique
   const [videoExercise, setVideoExercise] = useState(null);
   const [restTimer, setRestTimer] = useState(null); // { endsAt, totalSeconds, exerciseName, nextExerciseName }
   const [testStatus, setTestStatus] = useState({}); // { programme: "idle|loading|ok|err", teaser: ... }
+  const [loadingData, setLoadingData] = useState(true);
+  const [syncError, setSyncError] = useState("");
+  const recapSentRef = useRef(null); // weekKey pour lequel le recap a déjà été envoyé
+
+  // ── Chargement initial depuis Firestore (avec migration localStorage si Firestore vide) ──
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // 1. Fetch progress + history
+        let [pRes, hRes] = await Promise.all([
+          authedFetch("/api/progress"),
+          authedFetch("/api/history"),
+        ]);
+        if (!pRes.ok || !hRes.ok) throw new Error("Erreur de chargement");
+        let progress = await pRes.json();
+        let historyData = (await hRes.json()).history || [];
+
+        // 2. Migration : si Firestore est vide ET localStorage a quelque chose, on importe
+        const localChecked = loadChecked();
+        const localHistory = loadHistory();
+        const localMeta = loadMeta();
+        const firestoreEmpty = !progress.currentWeekKey && Object.keys(progress.checked || {}).length === 0;
+        const hasLocalData = Object.keys(localChecked).length > 0 || localHistory.length > 0;
+        if (firestoreEmpty && hasLocalData) {
+          await authedFetch("/api/migrate", {
+            method: "POST",
+            body: JSON.stringify({
+              checked: localChecked,
+              currentWeekKey: localMeta.currentWeekKey,
+              history: localHistory,
+            }),
+          });
+          // Re-fetch après migration
+          [pRes, hRes] = await Promise.all([
+            authedFetch("/api/progress"),
+            authedFetch("/api/history"),
+          ]);
+          progress = await pRes.json();
+          historyData = (await hRes.json()).history || [];
+        }
+
+        // 3. Roll-over hebdo : si la semaine a changé, archiver + reset
+        const ro = computeWeekRollover(progress.checked, progress.currentWeekKey, historyData, DAYS);
+        let finalChecked = ro.newChecked;
+        let finalHistory = historyData;
+        if (ro.needSync) {
+          if (ro.newHistoryEntry) {
+            await authedFetch("/api/history", {
+              method: "POST",
+              body: JSON.stringify(ro.newHistoryEntry),
+            });
+            finalHistory = [ro.newHistoryEntry, ...historyData];
+          }
+          await authedFetch("/api/progress", {
+            method: "POST",
+            body: JSON.stringify({
+              checked: ro.newChecked,
+              currentWeekKey: ro.newCurrentWeekKey,
+              ...(ro.shouldResetRecap ? { recapSent: "" } : {}),
+            }),
+          });
+        }
+        recapSentRef.current = ro.shouldResetRecap ? "" : (progress.recapSent || "");
+
+        if (!cancelled) {
+          setChecked(finalChecked);
+          setHistory(finalHistory);
+          setLoadingData(false);
+        }
+      } catch (e) {
+        // Fallback offline : on utilise localStorage
+        if (!cancelled) {
+          setChecked(loadChecked());
+          setHistory(loadHistory());
+          setSyncError("Mode offline — sync à la reconnexion");
+          setLoadingData(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.phone]);
 
   // Stats globales (cumul history + semaine courante)
   const stats = computeStats(history, checked, DAYS);
 
   // ── Trigger récap WhatsApp automatique quand 24/24 atteint (une seule fois par semaine)
   useEffect(() => {
+    if (loadingData) return;
     const totalEx = DAYS.reduce((a, d) => a + d.exercises.length, 0);
     const totalDone = Object.values(checked).filter(Boolean).length;
     if (totalDone !== totalEx || totalEx === 0) return;
-    const meta = loadMeta();
-    if (meta.recapSent === meta.currentWeekKey) return; // déjà envoyé pour cette semaine
-    const url = `/api/recap?done=${totalDone}&total=${totalEx}`
+    const currentWeekKey = getISOWeek().key;
+    if (recapSentRef.current === currentWeekKey) return; // déjà envoyé pour cette semaine
+    recapSentRef.current = currentWeekKey; // marque immédiatement pour éviter double-envoi
+    authedFetch(`/api/recap?done=${totalDone}&total=${totalEx}`
       + `&streak=${stats.currentStreak}`
       + `&record=${stats.bestStreak}`
-      + `&totalAllTime=${stats.totalExoFaits}`;
-    fetch(url)
+      + `&totalAllTime=${stats.totalExoFaits}`)
       .then(r => {
-        if (r.ok) saveMeta({ ...meta, recapSent: meta.currentWeekKey });
+        if (r.ok) {
+          authedFetch("/api/progress", {
+            method: "POST",
+            body: JSON.stringify({ recapSent: currentWeekKey }),
+          }).catch(() => {});
+        } else {
+          recapSentRef.current = ""; // rollback : on pourra réessayer plus tard
+        }
       })
-      .catch(() => { /* silent fail */ });
-  }, [checked, stats.currentStreak, stats.bestStreak, stats.totalExoFaits]);
+      .catch(() => { recapSentRef.current = ""; });
+  }, [checked, stats.currentStreak, stats.bestStreak, stats.totalExoFaits, loadingData]);
 
   const testRappel = useCallback(async (type) => {
     setTestStatus(s => ({ ...s, [type]: "loading" }));
     try {
-      const r = await fetch(`/api/rappel?type=${type}&test=1`);
+      const r = await authedFetch(`/api/rappel?type=${type}&test=1`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       setTestStatus(s => ({ ...s, [type]: "ok" }));
@@ -579,7 +679,12 @@ export default function App() {
       const key = `${dayId}-${exIdx}`;
       const wasChecked = !!prev[key];
       const next = { ...prev, [key]: !wasChecked };
-      saveChecked(next);
+      saveChecked(next); // cache local
+      // Sync Firestore en background (best effort)
+      authedFetch("/api/progress", {
+        method: "POST",
+        body: JSON.stringify({ checked: next }),
+      }).catch(() => { /* offline : sera repris au prochain login */ });
       // Démarre le timer de repos uniquement quand on COCHE (et qu'il y a un repos défini)
       if (!wasChecked && exercise) {
         const seconds = parseRestSeconds(exercise.rest);
@@ -617,6 +722,10 @@ export default function App() {
       const next = { ...prev };
       day.exercises.forEach((_, i) => { delete next[`${day.id}-${i}`]; });
       saveChecked(next);
+      authedFetch("/api/progress", {
+        method: "POST",
+        body: JSON.stringify({ checked: next }),
+      }).catch(() => {});
       return next;
     });
   };
@@ -970,6 +1079,88 @@ export default function App() {
                 </div>
               ))}
             </div>
+
+            {/* ── Mon profil ── */}
+            {user && (
+              <div style={{
+                marginTop: 20, background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, padding: "16px 18px",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                  <span style={{ fontSize: 22 }}>👤</span>
+                  <div style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 20, letterSpacing: "0.06em", color: "#fff" }}>
+                    MON PROFIL
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: 12, marginBottom: 10, alignItems: "flex-start" }}>
+                  <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.1em", width: 90, flexShrink: 0, paddingTop: 2 }}>Nom</div>
+                  <div style={{ fontSize: 13, color: "#fff", fontWeight: 600 }}>{user.name || "—"}</div>
+                </div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 14, alignItems: "flex-start" }}>
+                  <div style={{ fontSize: 11, color: "#555", textTransform: "uppercase", letterSpacing: "0.1em", width: 90, flexShrink: 0, paddingTop: 2 }}>WhatsApp</div>
+                  <div style={{ fontSize: 13, color: "#aaa", fontFamily: "monospace" }}>+{user.phone}</div>
+                </div>
+
+                {/* Toggle rappels actifs */}
+                <div style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  padding: "10px 12px", marginBottom: 10,
+                  background: "rgba(255,255,255,0.03)", borderRadius: 10,
+                }}>
+                  <div>
+                    <div style={{ fontSize: 13, color: "#fff", fontWeight: 600 }}>Rappels WhatsApp</div>
+                    <div style={{ fontSize: 11, color: "#666" }}>
+                      {user.rappelsActifs ? "Activés (17h30 + 20h)" : "Désactivés"}
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const next = !user.rappelsActifs;
+                      try {
+                        const r = await authedFetch("/api/auth/me", {
+                          method: "POST",
+                          body: JSON.stringify({ rappelsActifs: next }),
+                        });
+                        if (r.ok) {
+                          const d = await r.json();
+                          onUserUpdate?.(d.user);
+                        }
+                      } catch {}
+                    }}
+                    style={{
+                      width: 48, height: 26, borderRadius: 99, border: "none",
+                      background: user.rappelsActifs ? "#25D366" : "rgba(255,255,255,0.15)",
+                      position: "relative", transition: "all 0.2s", cursor: "pointer",
+                    }}
+                    aria-label="Activer/désactiver les rappels"
+                  >
+                    <div style={{
+                      width: 20, height: 20, borderRadius: "50%", background: "#fff",
+                      position: "absolute", top: 3, left: user.rappelsActifs ? 25 : 3,
+                      transition: "left 0.2s",
+                    }} />
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (confirm("Te déconnecter ? Tes données restent sauvegardées dans le cloud.")) {
+                      onLogout?.();
+                    }
+                  }}
+                  style={{
+                    width: "100%", padding: "10px", borderRadius: 10,
+                    border: "1px solid rgba(255,82,82,0.3)",
+                    background: "rgba(255,82,82,0.08)", color: "#ff8a8a",
+                    fontSize: 12, fontWeight: 700, letterSpacing: "0.06em",
+                    textTransform: "uppercase", transition: "all 0.2s",
+                  }}
+                >
+                  🚪 Se déconnecter
+                </button>
+              </div>
+            )}
 
             {/* ── Rappels WhatsApp ── */}
             <div style={{

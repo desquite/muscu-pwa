@@ -4,6 +4,7 @@
 // GET /api/rappel?type=programme&test=1  → test manuel depuis l'app
 
 import { sendWhatsApp } from "./_lib/wasender.js";
+import { db, getUserFromAuth } from "./_lib/firebase.js";
 
 // Programme miroir de src/App.jsx (gardé synchro à la main pour éviter un import)
 const DAYS = [
@@ -334,43 +335,54 @@ function conseilMessage(weekday) {
   return withEncouragement([c.titre, "", ...c.corps]);
 }
 
+function buildMessage(type, weekday) {
+  if (type === "teaser") {
+    const tomorrow = (weekday + 1) % 7;
+    const jourDemain = WEEKDAY_TO_DAY[tomorrow];
+    let m = jourDemain ? teaserMessage(jourDemain) : conseilMessage(tomorrow);
+    if (!m) m = withEncouragement(["🌙 *Bonne soirée !*", "", "Repos demain. Hydrate-toi bien et couche-toi tôt."]);
+    return m;
+  }
+  // type=programme
+  const jourAuj = WEEKDAY_TO_DAY[weekday];
+  let m = jourAuj ? programmeMessage(jourAuj) : conseilMessage(weekday);
+  if (!m) m = withEncouragement(["💪 *Journée OFF*", "", "Profite pour bien récupérer."]);
+  return m;
+}
+
 export default async function handler(req, res) {
   try {
-    // Auth optionnelle : si CRON_SECRET est défini, on l'exige (sauf en mode test=1)
-    const isTest = req.query?.test === "1";
-    const secret = process.env.CRON_SECRET;
-    if (secret && !isTest) {
-      const auth = req.headers?.authorization || "";
-      if (auth !== `Bearer ${secret}`) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-    }
-
     const type = req.query?.type || "programme";
+    const isTest = req.query?.test === "1";
 
     // Date en GMT+0 (Côte d'Ivoire = UTC, pas de DST)
     const now = new Date();
     const weekday = now.getUTCDay(); // 0=Dim, 1=Lun, ..., 6=Sam
+    const message = buildMessage(type, weekday);
 
-    let message;
-    if (type === "teaser") {
-      const tomorrow = (weekday + 1) % 7;
-      const jourDemain = WEEKDAY_TO_DAY[tomorrow];
-      message = jourDemain ? teaserMessage(jourDemain) : conseilMessage(tomorrow);
-      if (!message) {
-        message = withEncouragement(["🌙 *Bonne soirée !*", "", "Repos demain. Hydrate-toi bien et couche-toi tôt."]);
-      }
-    } else {
-      // type=programme
-      const jourAuj = WEEKDAY_TO_DAY[weekday];
-      message = jourAuj ? programmeMessage(jourAuj) : conseilMessage(weekday);
-      if (!message) {
-        message = withEncouragement(["💪 *Journée OFF*", "", "Profite pour bien récupérer."]);
-      }
+    // ─── Mode TEST : envoyé uniquement au user authentifié ───
+    if (isTest) {
+      const user = await getUserFromAuth(req);
+      if (!user) return res.status(401).json({ error: "Authentification requise pour le test" });
+      await sendWhatsApp(message, user.phone);
+      return res.status(200).json({ success: true, mode: "test", to: user.phone, message });
     }
 
-    await sendWhatsApp(message);
-    return res.status(200).json({ success: true, type, weekday, test: isTest, message });
+    // ─── Mode CRON : envoyé à tous les users actifs ───
+    const secret = process.env.CRON_SECRET;
+    if (secret) {
+      const auth = req.headers?.authorization || "";
+      if (auth !== `Bearer ${secret}`) return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const usersSnap = await db.collection("muscu_users").where("rappelsActifs", "==", true).get();
+    const results = await Promise.allSettled(
+      usersSnap.docs.map(d => sendWhatsApp(message, d.data().phone))
+    );
+    const sent = results.filter(r => r.status === "fulfilled").length;
+    const failed = results.filter(r => r.status === "rejected").map(r => r.reason?.message || "?");
+
+    return res.status(200).json({ success: true, type, weekday, totalUsers: usersSnap.size, sent, failed });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }

@@ -3,6 +3,7 @@
 // Appelé automatiquement par le frontend quand l'utilisateur atteint 24/24.
 
 import { sendWhatsApp } from "./_lib/wasender.js";
+import { getUserFromAuth } from "./_lib/firebase.js";
 
 const TROPHIES = [
   "🏆", "🥇", "🔥", "💪", "⚡", "🚀", "🌟", "💎", "👑", "🎯",
@@ -52,19 +53,20 @@ function recapMessage({ done, total, streak, record, totalAllTime }) {
 
 export default async function handler(req, res) {
   try {
+    const user = await getUserFromAuth(req);
+    if (!user) return res.status(401).json({ error: "Non authentifié" });
+
     const done = parseInt(req.query?.done, 10) || 0;
     const total = parseInt(req.query?.total, 10) || 0;
     const streak = parseInt(req.query?.streak, 10) || 0;
     const record = parseInt(req.query?.record, 10) || 0;
     const totalAllTime = parseInt(req.query?.totalAllTime, 10) || 0;
 
-    if (total === 0) {
-      return res.status(400).json({ error: "Paramètre 'total' requis" });
-    }
+    if (total === 0) return res.status(400).json({ error: "Paramètre 'total' requis" });
 
     const message = recapMessage({ done, total, streak, record, totalAllTime });
-    await sendWhatsApp(message);
-    return res.status(200).json({ success: true, message });
+    await sendWhatsApp(message, user.phone);
+    return res.status(200).json({ success: true, to: user.phone });
   } catch (e) {
     return res.status(500).json({ error: e.message });
   }
